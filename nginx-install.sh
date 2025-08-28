@@ -4,8 +4,8 @@ set -e
 # -------------------------------
 # Константы и переменные
 # -------------------------------
-GITHUB_USER="ваш_пользователь"          # Замените на ваш GitHub username
-REPO_NAME="nginx-setup"                 # Имя репозитория на GitHub
+GITHUB_USER="FullSilence"          # Замените на ваш GitHub username
+REPO_NAME="home-server"                 # Имя репозитория на GitHub
 REPO_URL="https://github.com/$GITHUB_USER/$REPO_NAME" # URL репозитория
 SITES_DIR="/etc/nginx/sites-available"  # Директория для копирования конфигураций
 NGINX_UI_REPO="https://raw.githubusercontent.com/0xJacky/nginx-ui/master/install.sh" # URL скрипта установки NginxUI
@@ -72,32 +72,28 @@ ufw status || ufw --force enable
 ufw allow 22/tcp
 ufw allow 80/tcp
 ufw allow 443/tcp
-
 # -------------------------------
-# Копирование конфигураций из репозитория
+# Копирование конфигураций из репозитория (архивом)
 # -------------------------------
 echo "Скачивание конфигураций из GitHub..."
 
-SITES_AVAILABLE_URL="$REPO_URL/raw/main/sites-available"  # Ссылка на директорию конфигураций (замените на ваш путь)
 TEMP_DIR=$(mktemp -d)
+ARCHIVE_URL="https://github.com/$GITHUB_USER/$REPO_NAME/archive/refs/heads/main.tar.gz"
 
-# Скачивание файлов конфигурации с GitHub
-curl -L "$SITES_AVAILABLE_URL" -o "$TEMP_DIR/sites-available.tar.gz"
+curl -L -s "$ARCHIVE_URL" -o "$TEMP_DIR/repo.tar.gz"
 
-# Разархивируем, если это архив
-if [ -f "$TEMP_DIR/sites-available.tar.gz" ]; then
-  echo "Распаковываем архив..."
-  tar -xzvf "$TEMP_DIR/sites-available.tar.gz" -C "$TEMP_DIR"
-fi
+echo "Распаковка архива..."
+tar -xzf "$TEMP_DIR/repo.tar.gz" -C "$TEMP_DIR"
 
-# Копируем файлы в нужную директорию
-if [ -d "$TEMP_DIR/sites-available" ]; then
-  echo "Копирование папки sites-available в $SITES_DIR"
-  cp -r "$TEMP_DIR/sites-available" "$SITES_DIR"
-  echo "Папка sites-available скопирована успешно."
+# Внутри архива папка называется REPO_NAME-main
+if [ -d "$TEMP_DIR/$REPO_NAME-main/sites-available" ]; then
+  echo "Копирование конфигов..."
+  cp -r "$TEMP_DIR/$REPO_NAME-main/sites-available/"* "$SITES_DIR/"
+  echo "Файлы скопированы успешно."
 else
-  echo "Папка sites-available не найдена в репозитории."
+  echo "Папка sites-available не найдена."
 fi
+
 
 # Очистка пакетов
 echo "Очистка пакетов..."
