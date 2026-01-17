@@ -26,7 +26,6 @@ METHOD=""
 NSAPP="homeassistant-os"
 var_os="homeassistant"
 DISK_SIZE="32G"
-LOCAL_XZ="/tmp/haos_generic-aarch64-17.0.rc2.qcow2.xz"
 LOCAL_QCOW2="/tmp/haos_generic-aarch64-17.0.rc2.qcow2"
 
 for version in "${VERSIONS[@]}"; do
