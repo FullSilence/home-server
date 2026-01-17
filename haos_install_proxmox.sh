@@ -26,66 +26,11 @@ METHOD=""
 NSAPP="homeassistant-os"
 var_os="homeassistant"
 DISK_SIZE="32G"
+LOCAL_XZ="/tmp/haos_generic-aarch64-17.0.rc2.qcow2"
 
-# ---- CLI args: --channel stable|beta|dev  (default: stable)
-CHANNEL="stable"
-
-usage() {
-  cat <<'EOF'
-Usage: haos-vm.sh [--channel stable|beta|dev]
-  --channel   Choose Home Assistant release channel used to load versions JSON.
-EOF
-}
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --channel)
-      shift
-      CHANNEL="${1:-}"
-      ;;
-    --channel=*)
-      CHANNEL="${1#*=}"
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    *)
-      echo "Unknown argument: $1"
-      usage
-      exit 1
-      ;;
-  esac
-  shift
-done
-
-case "$CHANNEL" in
-  stable|beta|dev) ;;
-  *)
-    echo "Invalid --channel: $CHANNEL (allowed: stable|beta|dev)"
-    exit 1
-    ;;
-esac
-
-VERSION_JSON_URL="https://raw.githubusercontent.com/home-assistant/version/master/${CHANNEL}.json"
-# ---- end CLI args
-
-
-# Load OVA version numbers for all channels from their own JSON files
 for version in "${VERSIONS[@]}"; do
-  json_url="https://raw.githubusercontent.com/home-assistant/version/master/${version}.json"
-  eval "$version=$(curl -fsSL "$json_url" | grep -m1 '\"ova\"' | cut -d '\"' -f 4)"
+  eval "$version=$(curl -fsSL https://raw.githubusercontent.com/home-assistant/version/master/stable.json | grep '"ova"' | cut -d '"' -f 4)"
 done
-
-# Optional: if user forced a channel via CLI, preselect that in defaults
-# (so Default Settings will follow it)
-case "$CHANNEL" in
-  stable) BRANCH="$stable" ;;
-  beta)   BRANCH="$beta" ;;
-  dev)    BRANCH="$dev" ;;
-esac
-
-
 YW=$(echo "\033[33m")
 BL=$(echo "\033[36m")
 HA=$(echo "\033[1;34m")
@@ -617,7 +562,44 @@ FILE_IMG="/var/lib/vz/template/tmp/${CACHE_FILE##*/%.xz}" # .qcow2
 mkdir -p "$CACHE_DIR" "$(dirname "$FILE_IMG")"
 msg_ok "${CL}${BL}${URL}${CL}"
 
-download_and_validate_xz "$URL" "$CACHE_FILE"
+#download_and_validate_xz "$URL" "$CACHE_FILE"
+
+CACHE_DIR="/var/lib/vz/template/cache"
+
+if [[ -n "${LOCAL_XZ:-}" ]]; then
+  # Локальный режим
+  if [[ ! -f "$LOCAL_XZ" ]]; then
+    msg_error "Local file not found: $LOCAL_XZ"
+    exit 1
+  fi
+
+  CACHE_FILE="$CACHE_DIR/$(basename "$LOCAL_XZ")"
+  msg_info "Using local image: $LOCAL_XZ"
+  cp -f "$LOCAL_XZ" "$CACHE_FILE"
+
+  if ! xz -t "$CACHE_FILE" &>/dev/null; then
+    msg_error "Local file is not a valid .xz or is corrupted: $CACHE_FILE"
+    exit 1
+  fi
+  msg_ok "Validated local image $(basename "$CACHE_FILE")"
+else
+  # Старый режим: скачивание
+  msg_info "Retrieving the URL for Home Assistant ${BRANCH} Disk Image"
+  if [ "$BRANCH" == "$dev" ]; then
+    URL="https://os-artifacts.home-assistant.io/${BRANCH}/haos_ova-${BRANCH}.qcow2.xz"
+  else
+    URL="https://github.com/home-assistant/operating-system/releases/download/${BRANCH}/haos_ova-${BRANCH}.qcow2.xz"
+  fi
+
+  CACHE_FILE="$CACHE_DIR/$(basename "$URL")"
+  msg_ok "${CL}${BL}${URL}${CL}"
+  download_and_validate_xz "$URL" "$CACHE_FILE"
+fi
+
+FILE_IMG="/var/lib/vz/template/tmp/${CACHE_FILE##*/%.xz}" # .qcow2
+mkdir -p "$CACHE_DIR" "$(dirname "$FILE_IMG")"
+
+
 
 msg_info "Creating Home Assistant OS VM shell"
 qm create $VMID -machine q35 -bios ovmf -agent 1 -tablet 0 -localtime 1 ${CPU_TYPE} \
