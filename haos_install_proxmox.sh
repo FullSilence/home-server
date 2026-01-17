@@ -27,6 +27,7 @@ NSAPP="homeassistant-os"
 var_os="homeassistant"
 DISK_SIZE="32G"
 LOCAL_XZ="/tmp/haos_generic-aarch64-17.0.rc2.qcow2.xz"
+LOCAL_QCOW2="/tmp/haos_generic-aarch64-17.0.rc2.qcow2"
 
 for version in "${VERSIONS[@]}"; do
   eval "$version=$(curl -fsSL https://raw.githubusercontent.com/home-assistant/version/master/stable.json | grep '"ova"' | cut -d '"' -f 4)"
@@ -548,21 +549,25 @@ msg_ok "Using ${CL}${BL}$STORAGE${CL} ${GN}for Storage Location."
 msg_ok "Virtual Machine ID is ${CL}${BL}$VMID${CL}."
 
 var_version="${BRANCH}"
-msg_info "Retrieving the URL for Home Assistant ${BRANCH} Disk Image"
-if [ "$BRANCH" == "$dev" ]; then
-  URL="https://os-artifacts.home-assistant.io/${BRANCH}/haos_ova-${BRANCH}.qcow2.xz"
-else
-  URL="https://github.com/home-assistant/operating-system/releases/download/${BRANCH}/haos_ova-${BRANCH}.qcow2.xz"
+
+# Локальный готовый qcow2, скачивания не делаем
+if [[ ! -f "$LOCAL_QCOW2" ]]; then
+  msg_error "Local qcow2 file not found: $LOCAL_QCOW2"
+  exit 1
 fi
 
 CACHE_DIR="/var/lib/vz/template/cache"
-CACHE_FILE="$CACHE_DIR/$(basename "$URL")"
-FILE_IMG="/var/lib/vz/template/tmp/${CACHE_FILE##*/%.xz}" # .qcow2
+mkdir -p "$CACHE_DIR"
 
-mkdir -p "$CACHE_DIR" "$(dirname "$FILE_IMG")"
-msg_ok "${CL}${BL}${URL}${CL}"
+CACHE_FILE="$CACHE_DIR/$(basename "$LOCAL_QCOW2")"
+cp -f "$LOCAL_QCOW2" "$CACHE_FILE"
 
-#download_and_validate_xz "$URL" "$CACHE_FILE"
+msg_ok "Using local qcow2 image: $CACHE_FILE"
+
+# ВНИМАНИЕ: это уже qcow2, не xz, поэтому FILE_IMG указываем на тот же файл
+FILE_IMG="$CACHE_FILE"
+
+
 
 CACHE_DIR="/var/lib/vz/template/cache"
 
@@ -607,7 +612,6 @@ qm create $VMID -machine q35 -bios ovmf -agent 1 -tablet 0 -localtime 1 ${CPU_TY
   -net0 "virtio,bridge=$BRG,macaddr=$MAC$VLAN$MTU" -onboot 1 -ostype l26 -scsihw virtio-scsi-pci >/dev/null
 msg_ok "Created VM shell"
 
-extract_xz_with_pv "$CACHE_FILE" "$FILE_IMG"
 
 msg_info "Importing disk into storage ($STORAGE)"
 if qm disk import --help >/dev/null 2>&1; then
