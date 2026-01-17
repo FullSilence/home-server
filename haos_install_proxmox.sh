@@ -499,7 +499,7 @@ msg_ok "Virtual Machine ID is ${CL}${BL}$VMID${CL}."
 var_version="${BRANCH}"
 
 # Используем готовый локальный .qcow2 файл
-FILE_IMG="/var/lib/vz/template/cache/haos_generic-aarch64-17.0.rc2.qcow2"
+FILE_IMG="/var/lib/vz/template/cache/haos_ova-17.0.rc2.qcow2"
 
 msg_info "Checking local image file"
 if [ ! -f "$FILE_IMG" ]; then
