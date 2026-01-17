@@ -503,4 +503,84 @@ FILE_IMG="/var/lib/vz/template/cache/haos_generic-aarch64-17.0.rc2.qcow2"
 
 msg_info "Checking local image file"
 if [ ! -f "$FILE_IMG" ]; then
-  msg_error "Local image file
+  msg_error "Local image file not found: $FILE_IMG"
+  exit 1
+fi
+msg_ok "Using local image: ${CL}${BL}${FILE_IMG}${CL}"
+
+msg_info "Creating Home Assistant OS VM shell"
+qm create $VMID -machine q35 -bios ovmf -agent 1 -tablet 0 -localtime 1 ${CPU_TYPE} \
+  -cores "$CORE_COUNT" -memory "$RAM_SIZE" -name "$HN" -tags community-script \
+  -net0 "virtio,bridge=$BRG,macaddr=$MAC$VLAN$MTU" -onboot 1 -ostype l26 -scsihw virtio-scsi-pci >/dev/null
+msg_ok "Created VM shell"
+
+msg_info "Importing disk into storage ($STORAGE)"
+if qm disk import --help >/dev/null 2>&1; then
+  IMPORT_CMD=(qm disk import)
+else
+  IMPORT_CMD=(qm importdisk)
+fi
+IMPORT_OUT="$("${IMPORT_CMD[@]}" "$VMID" "$FILE_IMG" "$STORAGE" --format raw 2>&1 || true)"
+DISK_REF="$(printf '%s\n' "$IMPORT_OUT" | sed -n "s/.*successfully imported disk '\([^']\+\)'.*/\1/p" | tr -d "\r\"'")"
+[[ -z "$DISK_REF" ]] && DISK_REF="$(pvesm list "$STORAGE" | awk -v id="$VMID" '$5 ~ ("vm-"id"-disk-") {print $1":"$5}' | sort | tail -n1)"
+[[ -z "$DISK_REF" ]] && {
+  msg_error "Unable to determine imported disk reference."
+  echo "$IMPORT_OUT"
+  exit 1
+}
+msg_ok "Imported disk (${CL}${BL}${DISK_REF}${CL})"
+
+msg_info "Attaching EFI and root disk"
+qm set $VMID \
+  --efidisk0 ${STORAGE}:0,efitype=4m \
+  --scsi0 ${DISK_REF},ssd=1,discard=on \
+  --boot order=scsi0 \
+  --serial0 socket >/dev/null
+qm set $VMID --agent enabled=1 >/dev/null
+msg_ok "Attached EFI and root disk"
+
+msg_info "Resizing disk to $DISK_SIZE"
+qm resize $VMID scsi0 ${DISK_SIZE} >/dev/null
+msg_ok "Resized disk"
+
+DESCRIPTION=$(
+  cat <<'EOF'
+<div align='center'>
+  <a href='https://Helper-Scripts.com' target='_blank' rel='noopener noreferrer'>
+    <img src='https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/misc/images/logo-81x112.png' alt='Logo' style='width:81px;height:112px;'/>
+  </a>
+
+  <h2 style='font-size: 24px; margin: 20px 0;'>Homeassistant OS VM</h2>
+
+  <p style='margin: 16px 0;'>
+    <a href='https://ko-fi.com/community_scripts' target='_blank' rel='noopener noreferrer'>
+      <img src='https://img.shields.io/badge/&#x2615;-Buy us a coffee-blue' alt='spend Coffee' />
+    </a>
+  </p>
+
+  <span style='margin: 0 10px;'>
+    <i class='fa fa-github fa-fw' style='color: #f5f5f5;'></i>
+    <a href='https://github.com/community-scripts/ProxmoxVE' target='_blank' rel='noopener noreferrer' style='text-decoration: none; color: #00617f;'>GitHub</a>
+  </span>
+  <span style='margin: 0 10px;'>
+    <i class='fa fa-comments fa-fw' style='color: #f5f5f5;'></i>
+    <a href='https://github.com/community-scripts/ProxmoxVE/discussions' target='_blank' rel='noopener noreferrer' style='text-decoration: none; color: #00617f;'>Discussions</a>
+  </span>
+  <span style='margin: 0 10px;'>
+    <i class='fa fa-exclamation-circle fa-fw' style='color: #f5f5f5;'></i>
+    <a href='https://github.com/community-scripts/ProxmoxVE/issues' target='_blank' rel='noopener noreferrer' style='text-decoration: none; color: #00617f;'>Issues</a>
+  </span>
+</div>
+EOF
+)
+
+qm set $VMID -description "$DESCRIPTION" >/dev/null
+msg_ok "Created Homeassistant OS VM ${CL}${BL}(${HN})"
+
+if [ "$START_VM" == "yes" ]; then
+  msg_info "Starting Home Assistant OS VM"
+  qm start $VMID
+  msg_ok "Started Home Assistant OS VM"
+fi
+post_update_to_api "done" "none"
+msg_ok "Completed successfully!\n"
