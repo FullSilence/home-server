@@ -26,7 +26,6 @@ METHOD=""
 NSAPP="homeassistant-os"
 var_os="homeassistant"
 DISK_SIZE="32G"
-LOCAL_QCOW2="/tmp/haos_generic-aarch64-17.0.rc2.qcow2"
 
 for version in "${VERSIONS[@]}"; do
   eval "$version=$(curl -fsSL https://raw.githubusercontent.com/home-assistant/version/master/stable.json | grep '"ova"' | cut -d '"' -f 4)"
@@ -217,56 +216,6 @@ function ensure_pv() {
     fi
     msg_ok "Installed pv"
   fi
-}
-
-# Download an .xz file and validate it
-# Args: $1=url $2=cache_file
-function download_and_validate_xz() {
-  local url="$1"
-  local file="$2"
-
-  # If file exists, check validity
-  if [[ -s "$file" ]]; then
-    if xz -t "$file" &>/dev/null; then
-      msg_ok "Using cached image $(basename "$file")"
-      return 0
-    else
-      msg_error "Cached file $(basename "$file") is corrupted. Deleting and retrying download..."
-      rm -f "$file"
-    fi
-  fi
-
-  # Download fresh file
-  msg_info "Downloading image: $(basename "$file")"
-  if ! curl -fSL -o "$file" "$url"; then
-    msg_error "Download failed: $url"
-    rm -f "$file"
-    exit 1
-  fi
-
-  # Validate again
-  if ! xz -t "$file" &>/dev/null; then
-    msg_error "Downloaded file $(basename "$file") is corrupted. Please try again later."
-    rm -f "$file"
-    exit 1
-  fi
-  msg_ok "Downloaded and validated $(basename "$file")"
-}
-
-# Extract .xz with pv
-# Args: $1=cache_file $2=target_img
-function extract_xz_with_pv() {
-  set -o pipefail
-  local file="$1"
-  local target="$2"
-
-  msg_info "Decompressing $(basename "$file") to $target"
-  if ! xz -dc "$file" | pv -N "Extracting" >"$target"; then
-    msg_error "Failed to extract $file"
-    rm -f "$target"
-    exit 1
-  fi
-  msg_ok "Decompressed to $target"
 }
 
 function default_settings() {
@@ -549,145 +498,9 @@ msg_ok "Virtual Machine ID is ${CL}${BL}$VMID${CL}."
 
 var_version="${BRANCH}"
 
-# Локальный готовый qcow2, скачивания не делаем
-if [[ ! -f "$LOCAL_QCOW2" ]]; then
-  msg_error "Local qcow2 file not found: $LOCAL_QCOW2"
-  exit 1
-fi
+# Используем готовый локальный .qcow2 файл
+FILE_IMG="/var/lib/vz/template/cache/haos_generic-aarch64-17.0.rc2.qcow2"
 
-CACHE_DIR="/var/lib/vz/template/cache"
-mkdir -p "$CACHE_DIR"
-
-CACHE_FILE="$CACHE_DIR/$(basename "$LOCAL_QCOW2")"
-cp -f "$LOCAL_QCOW2" "$CACHE_FILE"
-
-msg_ok "Using local qcow2 image: $CACHE_FILE"
-
-# ВНИМАНИЕ: это уже qcow2, не xz, поэтому FILE_IMG указываем на тот же файл
-FILE_IMG="$CACHE_FILE"
-
-
-
-CACHE_DIR="/var/lib/vz/template/cache"
-
-if [[ -n "${LOCAL_XZ:-}" ]]; then
-  # Локальный режим
-  if [[ ! -f "$LOCAL_XZ" ]]; then
-    msg_error "Local file not found: $LOCAL_XZ"
-    exit 1
-  fi
-
-  CACHE_FILE="$CACHE_DIR/$(basename "$LOCAL_XZ")"
-  msg_info "Using local image: $LOCAL_XZ"
-  cp -f "$LOCAL_XZ" "$CACHE_FILE"
-
-  if ! xz -t "$CACHE_FILE" &>/dev/null; then
-    msg_error "Local file is not a valid .xz or is corrupted: $CACHE_FILE"
-    exit 1
-  fi
-  msg_ok "Validated local image $(basename "$CACHE_FILE")"
-else
-  # Старый режим: скачивание
-  msg_info "Retrieving the URL for Home Assistant ${BRANCH} Disk Image"
-  if [ "$BRANCH" == "$dev" ]; then
-    URL="https://os-artifacts.home-assistant.io/${BRANCH}/haos_ova-${BRANCH}.qcow2.xz"
-  else
-    URL="https://github.com/home-assistant/operating-system/releases/download/${BRANCH}/haos_ova-${BRANCH}.qcow2.xz"
-  fi
-
-  CACHE_FILE="$CACHE_DIR/$(basename "$URL")"
-  msg_ok "${CL}${BL}${URL}${CL}"
-  download_and_validate_xz "$URL" "$CACHE_FILE"
-fi
-
-FILE_IMG="/var/lib/vz/template/tmp/${CACHE_FILE##*/%.xz}" # .qcow2
-mkdir -p "$CACHE_DIR" "$(dirname "$FILE_IMG")"
-
-
-
-msg_info "Creating Home Assistant OS VM shell"
-qm create $VMID -machine q35 -bios ovmf -agent 1 -tablet 0 -localtime 1 ${CPU_TYPE} \
-  -cores "$CORE_COUNT" -memory "$RAM_SIZE" -name "$HN" -tags community-script \
-  -net0 "virtio,bridge=$BRG,macaddr=$MAC$VLAN$MTU" -onboot 1 -ostype l26 -scsihw virtio-scsi-pci >/dev/null
-msg_ok "Created VM shell"
-
-
-msg_info "Importing disk into storage ($STORAGE)"
-if qm disk import --help >/dev/null 2>&1; then
-  IMPORT_CMD=(qm disk import)
-else
-  IMPORT_CMD=(qm importdisk)
-fi
-IMPORT_OUT="$("${IMPORT_CMD[@]}" "$VMID" "$FILE_IMG" "$STORAGE" --format raw 2>&1 || true)"
-DISK_REF="$(printf '%s\n' "$IMPORT_OUT" | sed -n "s/.*successfully imported disk '\([^']\+\)'.*/\1/p" | tr -d "\r\"'")"
-[[ -z "$DISK_REF" ]] && DISK_REF="$(pvesm list "$STORAGE" | awk -v id="$VMID" '$5 ~ ("vm-"id"-disk-") {print $1":"$5}' | sort | tail -n1)"
-[[ -z "$DISK_REF" ]] && {
-  msg_error "Unable to determine imported disk reference."
-  echo "$IMPORT_OUT"
-  exit 1
-}
-msg_ok "Imported disk (${CL}${BL}${DISK_REF}${CL})"
-
-rm -f "$FILE_IMG"
-
-msg_info "Attaching EFI and root disk"
-qm set $VMID \
-  --efidisk0 ${STORAGE}:0,efitype=4m \
-  --scsi0 ${DISK_REF},ssd=1,discard=on \
-  --boot order=scsi0 \
-  --serial0 socket >/dev/null
-qm set $VMID --agent enabled=1 >/dev/null
-msg_ok "Attached EFI and root disk"
-
-msg_info "Resizing disk to $DISK_SIZE"
-qm resize $VMID scsi0 ${DISK_SIZE} >/dev/null
-msg_ok "Resized disk"
-
-DESCRIPTION=$(
-  cat <<EOF
-<div align='center'>
-  <a href='https://Helper-Scripts.com' target='_blank' rel='noopener noreferrer'>
-    <img src='https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/misc/images/logo-81x112.png' alt='Logo' style='width:81px;height:112px;'/>
-  </a>
-
-  <h2 style='font-size: 24px; margin: 20px 0;'>Homeassistant OS VM</h2>
-
-  <p style='margin: 16px 0;'>
-    <a href='https://ko-fi.com/community_scripts' target='_blank' rel='noopener noreferrer'>
-      <img src='https://img.shields.io/badge/&#x2615;-Buy us a coffee-blue' alt='spend Coffee' />
-    </a>
-  </p>
-
-  <span style='margin: 0 10px;'>
-    <i class="fa fa-github fa-fw" style="color: #f5f5f5;"></i>
-    <a href='https://github.com/community-scripts/ProxmoxVE' target='_blank' rel='noopener noreferrer' style='text-decoration: none; color: #00617f;'>GitHub</a>
-  </span>
-  <span style='margin: 0 10px;'>
-    <i class="fa fa-comments fa-fw" style="color: #f5f5f5;"></i>
-    <a href='https://github.com/community-scripts/ProxmoxVE/discussions' target='_blank' rel='noopener noreferrer' style='text-decoration: none; color: #00617f;'>Discussions</a>
-  </span>
-  <span style='margin: 0 10px;'>
-    <i class="fa fa-exclamation-circle fa-fw" style="color: #f5f5f5;"></i>
-    <a href='https://github.com/community-scripts/ProxmoxVE/issues' target='_blank' rel='noopener noreferrer' style='text-decoration: none; color: #00617f;'>Issues</a>
-  </span>
-</div>
-EOF
-)
-qm set $VMID -description "$DESCRIPTION" >/dev/null
-msg_ok "Created Homeassistant OS VM ${CL}${BL}(${HN})"
-
-if whiptail --backtitle "Proxmox VE Helper Scripts" --title "Image Cache" \
-  --yesno "Keep downloaded Home Assistant OS image for future VMs?\n\nFile: $CACHE_FILE" 10 70; then
-  msg_ok "Keeping cached image"
-else
-  rm -f "$CACHE_FILE"
-  msg_ok "Deleted cached image"
-fi
-
-if [ "$START_VM" == "yes" ]; then
-  msg_info "Starting Home Assistant OS VM"
-  qm start $VMID
-  msg_ok "Started Home Assistant OS VM"
-fi
-post_update_to_api "done" "none"
-msg_ok "Completed successfully!\n"
+msg_info "Checking local image file"
+if [ ! -f "$FILE_IMG" ]; then
+  msg_error "Local image file
