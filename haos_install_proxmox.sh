@@ -26,7 +26,7 @@ METHOD=""
 NSAPP="homeassistant-os"
 var_os="homeassistant"
 DISK_SIZE="32G"
-LOCAL_XZ="/tmp/haos_generic-aarch64-17.0.rc2.qcow2"
+LOCAL_XZ="/tmp/haos_generic-aarch64-17.0.rc2.qcow2.xz"
 
 for version in "${VERSIONS[@]}"; do
   eval "$version=$(curl -fsSL https://raw.githubusercontent.com/home-assistant/version/master/stable.json | grep '"ova"' | cut -d '"' -f 4)"
